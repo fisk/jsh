@@ -147,7 +147,9 @@ public class App {
                 List<String> argv = new ArrayList<>(Arrays.asList(input.args()));
                 if (!argv.isEmpty()) {
                     try {
-                        executeCmnd(argv);
+                        var exec = new Executor(argv);
+                        exec.execute();
+                        //executeCmnd(argv);
                     } catch (Exception e) {
                         saveException(e);
                     }
@@ -252,9 +254,10 @@ public class App {
             MyCommands myCommands = new MyCommands(App::workDir);
             ReplSystemRegistry systemRegistry = new ReplSystemRegistry(parser, terminal, App::workDir, configPath);
             systemRegistry.register("groovy", new GroovyCommand(scriptEngine, printer));
-            systemRegistry.setCommandRegistries(consoleEngine, builtins, myCommands);
             systemRegistry.addCompleter(scriptEngine.getScriptCompleter());
             systemRegistry.setScriptDescription(scriptEngine::scriptDescription);
+
+            systemRegistry.setCommandRegistries(consoleEngine, builtins, myCommands);
             //
             // LineReader
             //
