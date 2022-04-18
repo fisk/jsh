@@ -1,16 +1,11 @@
-/*
- * Copyright (c) 2002-2021, the original author or authors.
- *
- * This software is distributable under the BSD license. See the terms of the
- * BSD license in the documentation provided with this software.
- *
- * https://opensource.org/licenses/BSD-3-Clause
- */
 package com.oracle;
 
 import java.io.*;
+import java.net.InetAddress;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.format.DateTimeFormatter;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -21,7 +16,6 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import org.jline.builtins.*;
-import org.jline.builtins.SyntaxHighlighter;
 import org.jline.builtins.Completers.OptionCompleter;
 import org.jline.console.impl.*;
 import org.jline.console.CommandInput;
@@ -51,22 +45,21 @@ import org.jline.widget.TailTipWidgets;
 import org.jline.widget.TailTipWidgets.TipType;
 import org.jline.widget.Widgets;
 
-import static org.jline.builtins.SyntaxHighlighter.DEFAULT_NANORC_FILE;
-import static org.jline.console.ConsoleEngine.VAR_NANORC;
-
 public class App {
+    public static String POWERLINE_RIGHT_BLOCK_ARROW = "\uE0B0";
+    public static String POWERLINE_RIGHT_THIN_ARROW = "\uE0B1";
+    public static String ESCAPE = "\u001B";
 
     protected static class MyCommands extends JlineCommandRegistry implements CommandRegistry {
         private LineReader reader;
         private final Supplier<Path> workDir;
+        private final Map<String, CommandMethods> commandExecute = new HashMap<>();
 
         public MyCommands(Supplier<Path> workDir) {
             super();
             this.workDir = workDir;
-            Map<String,CommandMethods> commandExecute = new HashMap<>();
-            commandExecute.put("tput", new CommandMethods(this::tput, this::tputCompleter));
-            commandExecute.put("testkey", new CommandMethods(this::testkey, this::defaultCompleter));
             commandExecute.put("clear", new CommandMethods(this::clear, this::defaultCompleter));
+            commandExecute.put("exit", new CommandMethods(this::exit, this::defaultCompleter));
             commandExecute.put("!", new CommandMethods(this::shell, this::defaultCompleter));
             registerCommands(commandExecute);
         }
@@ -75,60 +68,17 @@ public class App {
             this.reader = reader;
         }
 
+        public boolean isCommand(String command) {
+            return commandExecute.get(command) != null;
+        }
+
         private Terminal terminal() {
             return reader.getTerminal();
         }
 
-        private void tput(CommandInput input) {
-            final String[] usage = {
-                    "tput -  put terminal capability",
-                    "Usage: tput [CAPABILITY]",
-                    "  -? --help                       Displays command help"
-            };
-            try {
-                Options opt = parseOptions(usage, input.xargs());
-                List<String> argv = opt.args();
-                if (argv.size() > 0) {
-                    Capability vcap = Capability.byName(argv.get(0));
-                    if (vcap != null) {
-                        terminal().puts(vcap, opt.argObjects().subList(1, argv.size()).toArray(new Object[0]));
-                    } else {
-                        terminal().writer().println("Unknown capability");
-                    }
-                } else {
-                    terminal().writer().println("Usage: tput [CAPABILITY]");
-                }
-            } catch (Exception e) {
-                saveException(e);
-            }
-        }
-
-        private void testkey(CommandInput input) {
-            final String[] usage = {
-                    "testkey -  display the key events",
-                    "Usage: testkey",
-                    "  -? --help                       Displays command help"
-            };
-            try {
-                parseOptions(usage, input.args());
-                terminal().writer().write("Input the key event(Enter to complete): ");
-                terminal().writer().flush();
-                StringBuilder sb = new StringBuilder();
-                while (true) {
-                    int c = ((LineReaderImpl) reader).readCharacter();
-                    if (c == 10 || c == 13) break;
-                    sb.append(new String(Character.toChars(c)));
-                }
-                terminal().writer().println(KeyMap.display(sb.toString()));
-                terminal().writer().flush();
-            } catch (Exception e) {
-                saveException(e);
-            }
-        }
-
         private void clear(CommandInput input) {
             final String[] usage = {
-                    "clear -  clear terminal",
+                    "clear - clear terminal",
                     "Usage: clear",
                     "  -? --help                       Displays command help"
             };
@@ -136,6 +86,20 @@ public class App {
                 parseOptions(usage, input.args());
                 terminal().puts(Capability.clear_screen);
                 terminal().flush();
+            } catch (Exception e) {
+                saveException(e);
+            }
+        }
+
+        private void exit(CommandInput input) {
+            final String[] usage = {
+                "exit - exit terminal",
+                "Usage: exit",
+                "  -? --help                       Displays command help"
+            };
+            try {
+                parseOptions(usage, input.args());
+                System.exit(0);
             } catch (Exception e) {
                 saveException(e);
             }
@@ -194,17 +158,6 @@ public class App {
         private Set<String> capabilities() {
             return InfoCmp.getCapabilitiesByName().keySet();
         }
-
-        private List<Completer> tputCompleter(String command) {
-            List<Completer> completers = new ArrayList<>();
-            completers.add(new ArgumentCompleter(NullCompleter.INSTANCE
-                                               , new OptionCompleter(new StringsCompleter(this::capabilities)
-                                                                   , this::commandOptions
-                                                                   , 1)
-                                                ));
-            return completers;
-        }
-
     }
 
     private static class StreamGobbler implements Runnable {
@@ -234,9 +187,41 @@ public class App {
         }
     }
 
+    public static Path workDir() {
+        return Paths.get(System.getProperty("user.dir"));
+    }
+
+    public static String prompt() {
+        try {
+            var home = System.getProperty("user.home");
+            var user = System.getProperty("user.name");
+            var host = InetAddress.getLocalHost().getHostName();
+            var cwd = workDir().toString().replace(home, "~");
+            var dtf = DateTimeFormatter.ofPattern("HH:mm:ss");
+            var now = LocalDateTime.now();
+            var fnow = dtf.format(now);
+            var color_begin = ESCAPE + "[";
+            var color_end = "m";
+            var fg_blue_bg_black = color_begin + "34;40" + color_end;
+            var fg_red_bg_black = color_begin + "31;40" + color_end;
+            var fg_green_bg_black = color_begin + "32;40" + color_end;
+            var fg_black_bg_blue = color_begin + "30;44" + color_end;
+            var fg_blue_bg_default = color_begin + "34;49" + color_end;
+            var fg_green_bg_default = color_begin + "32;49" + color_end;
+            return fg_blue_bg_black + " " + user +
+                   fg_red_bg_black + "@" +
+                   fg_green_bg_black + host + " " +
+                   fg_black_bg_blue + POWERLINE_RIGHT_BLOCK_ARROW + " " + cwd + " " +
+                   fg_blue_bg_default + POWERLINE_RIGHT_BLOCK_ARROW + "\n" + " " +
+                   fg_green_bg_default + fnow + " " +
+                   fg_blue_bg_default + POWERLINE_RIGHT_THIN_ARROW + " ";
+        } catch (Exception e) {
+            return "jsandbox> ";
+        }
+    }
+
     public static void main(String[] args) {
         try {
-            Supplier<Path> workDir = () -> Paths.get(System.getProperty("user.dir"));
             //
             // Parser & Terminal
             //
@@ -245,26 +230,14 @@ public class App {
             parser.setEofOnUnclosedQuote(true);
             parser.setEscapeChars(null);
             parser.setRegexCommand("[:]{0,1}[a-zA-Z!]{1,}\\S*");    // change default regex to support shell commands
-            parser.blockCommentDelims(new DefaultParser.BlockCommentDelims("/*", "*/"))
-                    .lineCommentDelims(new String[]{"//"});
             Terminal terminal = TerminalBuilder.builder().build();
             if (terminal.getWidth() == 0 || terminal.getHeight() == 0) {
                 terminal.setSize(new Size(120, 40));   // hard coded terminal size when redirecting
             }
             Thread executeThread = Thread.currentThread();
             terminal.handle(Signal.INT, signal -> executeThread.interrupt());
-            //
-            // Create jnanorc config file for demo
-            //
-            File file = new File(Repl.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath());
+            File file = new File(System.getProperty("user.home") + "/.jsandbox");
             String root = file.getCanonicalPath().replace("classes", "").replaceAll("\\\\", "/"); // forward slashes works better also in windows!
-            File jnanorcFile = Paths.get(root, DEFAULT_NANORC_FILE).toFile();
-            if (!jnanorcFile.exists()) {
-                try (FileWriter fw = new FileWriter(jnanorcFile)) {
-                    fw.write("theme " + root + "nanorc/dark.nanorctheme\n");
-                    fw.write("include " + root + "nanorc/*.nanorc\n");
-                }
-            }
             //
             // ScriptEngine and command registries
             //
@@ -273,31 +246,15 @@ public class App {
             ConfigurationPath configPath = new ConfigurationPath(Paths.get(root), Paths.get(root));
             Printer printer = new DefaultPrinter(scriptEngine, configPath);
             ConsoleEngineImpl consoleEngine = new ConsoleEngineImpl(scriptEngine
-                                                                  , printer
-                                                                  , workDir, configPath);
-            Builtins builtins = new Builtins(workDir, configPath,  (String fun)-> new ConsoleEngine.WidgetCreator(consoleEngine, fun));
-            MyCommands myCommands = new MyCommands(workDir);
-            ReplSystemRegistry systemRegistry = new ReplSystemRegistry(parser, terminal, workDir, configPath);
+                                                                    , printer
+                                                                    , App::workDir, configPath);
+            Builtins builtins = new Builtins(App::workDir, configPath,  (String fun)-> new ConsoleEngine.WidgetCreator(consoleEngine, fun));
+            MyCommands myCommands = new MyCommands(App::workDir);
+            ReplSystemRegistry systemRegistry = new ReplSystemRegistry(parser, terminal, App::workDir, configPath);
             systemRegistry.register("groovy", new GroovyCommand(scriptEngine, printer));
             systemRegistry.setCommandRegistries(consoleEngine, builtins, myCommands);
             systemRegistry.addCompleter(scriptEngine.getScriptCompleter());
             systemRegistry.setScriptDescription(scriptEngine::scriptDescription);
-            //
-            // Command line highlighter
-            //
-            Path jnanorc = configPath.getConfig(DEFAULT_NANORC_FILE);
-            scriptEngine.put(VAR_NANORC, jnanorc.toString());
-            SyntaxHighlighter commandHighlighter = SyntaxHighlighter.build(jnanorc,"COMMAND");
-            SyntaxHighlighter argsHighlighter = SyntaxHighlighter.build(jnanorc,"ARGS");
-            SyntaxHighlighter groovyHighlighter = SyntaxHighlighter.build(jnanorc,"Groovy");
-            SystemHighlighter highlighter = new SystemHighlighter(commandHighlighter, argsHighlighter, groovyHighlighter);
-            if (!OSUtils.IS_WINDOWS) {
-                highlighter.setSpecificHighlighter("!", SyntaxHighlighter.build(jnanorc, "SH-REPL"));
-            }
-            highlighter.addFileHighlight("nano", "less", "slurp");
-            highlighter.addFileHighlight("groovy", "classloader", Arrays.asList("-a", "--add"));
-            highlighter.addExternalHighlighterRefresh(printer::refresh);
-            highlighter.addExternalHighlighterRefresh(scriptEngine::refresh);
             //
             // LineReader
             //
@@ -305,7 +262,6 @@ public class App {
                     .terminal(terminal)
                     .completer(systemRegistry.completer())
                     .parser(parser)
-                    .highlighter(highlighter)
                     .variable(LineReader.SECONDARY_PROMPT_PATTERN, "%M%P > ")
                     .variable(LineReader.INDENTATION, 2)
                     .variable(LineReader.LIST_MAX, 100)
@@ -330,16 +286,14 @@ public class App {
             new TailTipWidgets(reader, systemRegistry::commandDescription, 5, TipType.COMPLETER);
             KeyMap<Binding> keyMap = reader.getKeyMaps().get("main");
             keyMap.bind(new Reference(Widgets.TAILTIP_TOGGLE), KeyMap.alt("s"));
-            systemRegistry.initialize(Paths.get(root, "init.jline").toFile());
             //
             // REPL-loop
             //
-            System.out.println(terminal.getName() + ": " + terminal.getType());
             while (true) {
                 try {
                     systemRegistry.cleanUp();         // delete temporary variables and reset output streams
-                    String line = reader.readLine("groovy-repl> ");
-                    line = parser.getCommand(line).startsWith("!") ? line.replaceFirst("!", "! ") : line;
+                    String line = reader.readLine(prompt());
+                    line = !myCommands.isCommand(parser.getCommand(line)) ? "! " + line : line;
                     Object result = systemRegistry.execute(line);
                     consoleEngine.println(result);
                 }
@@ -362,18 +316,6 @@ public class App {
                 }
             }
             systemRegistry.close();                   // persist pipeline completer names etc
-
-            Set<Thread> threadSet = Thread.getAllStackTraces().keySet();
-            boolean groovyRunning=false;              // check Groovy GUI apps
-            for (Thread t : threadSet) {
-                if (t.getName().startsWith("AWT-Shut")) {
-                    groovyRunning = true;
-                    break;
-                }
-            }
-            if (groovyRunning) {
-                consoleEngine.println("Please, close Groovy Consoles/Object Browsers!");
-            }
         }
         catch (Throwable t) {
             t.printStackTrace();
