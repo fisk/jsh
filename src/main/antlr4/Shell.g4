@@ -8,4 +8,4 @@ command:
     program=IDENTIFIER (' ' IDENTIFIER)*
     EOF;
 
-IDENTIFIER: [a-z]+;
+IDENTIFIER: [a-zA-Z-=]+;

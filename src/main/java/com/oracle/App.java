@@ -105,37 +105,9 @@ public class App {
             }
         }
 
-        private void executeCmnd(List<String> args) throws Exception {
-            ProcessBuilder builder = new ProcessBuilder();
-            List<String> _args = new ArrayList<>();
-            if (OSUtils.IS_WINDOWS) {
-                _args.add("cmd.exe");
-                _args.add("/c");
-            } else {
-                _args.add("sh");
-                _args.add("-c");
-            }
-            _args.add(String.join(" ", args));
-            builder.command(_args);
-            builder.directory(workDir.get().toFile());
-            Process process = builder.start();
-            StreamGobbler streamGobbler = new StreamGobbler(process.getInputStream(), System.out::println);
-            Thread th = new Thread(streamGobbler);
-            th.start();
-            int exitCode = process.waitFor();
-            th.join();
-            if (exitCode != 0) {
-                streamGobbler = new StreamGobbler(process.getErrorStream(), System.out::println);
-                th = new Thread(streamGobbler);
-                th.start();
-                th.join();
-                throw new Exception("Error occurred in shell!");
-            }
-        }
-
         private void shell(CommandInput input) {
-            final String[] usage = { "!<command> -  execute shell command"
-                                   , "Usage: !<command>"
+            final String[] usage = { "<command> - execute shell command"
+                                   , "Usage: <command>"
                                    , "  -? --help                       Displays command help" };
             if (input.args().length == 1 && (input.args()[0].equals("-?") || input.args()[0].equals("--help"))) {
                 try {
@@ -149,7 +121,6 @@ public class App {
                     try {
                         var exec = new Executor(argv);
                         exec.execute();
-                        //executeCmnd(argv);
                     } catch (Exception e) {
                         saveException(e);
                     }
@@ -159,22 +130,6 @@ public class App {
 
         private Set<String> capabilities() {
             return InfoCmp.getCapabilitiesByName().keySet();
-        }
-    }
-
-    private static class StreamGobbler implements Runnable {
-        private final InputStream inputStream;
-        private final Consumer<String> consumer;
-
-        public StreamGobbler(InputStream inputStream, Consumer<String> consumer) {
-            this.inputStream = inputStream;
-            this.consumer = consumer;
-        }
-
-        @Override
-        public void run() {
-            new BufferedReader(new InputStreamReader(inputStream)).lines()
-              .forEach(consumer);
         }
     }
 
@@ -231,18 +186,16 @@ public class App {
             parser.setEofOnUnclosedBracket(Bracket.CURLY, Bracket.ROUND, Bracket.SQUARE);
             parser.setEofOnUnclosedQuote(true);
             parser.setEscapeChars(null);
-            parser.setRegexCommand("[:]{0,1}[a-zA-Z!]{1,}\\S*");    // change default regex to support shell commands
+            parser.setRegexCommand("[:]{0,1}[a-zA-Z!]{1,}\\S*");
             Terminal terminal = TerminalBuilder.builder().build();
             if (terminal.getWidth() == 0 || terminal.getHeight() == 0) {
-                terminal.setSize(new Size(120, 40));   // hard coded terminal size when redirecting
+                terminal.setSize(new Size(120, 40));
             }
             Thread executeThread = Thread.currentThread();
             terminal.handle(Signal.INT, signal -> executeThread.interrupt());
             File file = new File(System.getProperty("user.home") + "/.jsandbox");
-            String root = file.getCanonicalPath().replace("classes", "").replaceAll("\\\\", "/"); // forward slashes works better also in windows!
-            //
-            // ScriptEngine and command registries
-            //
+            String root = file.getCanonicalPath().replace("classes", "").replaceAll("\\\\", "/");
+
             GroovyEngine scriptEngine = new GroovyEngine();
             scriptEngine.put("ROOT", root);
             ConfigurationPath configPath = new ConfigurationPath(Paths.get(root), Paths.get(root));
@@ -258,9 +211,7 @@ public class App {
             systemRegistry.setScriptDescription(scriptEngine::scriptDescription);
 
             systemRegistry.setCommandRegistries(consoleEngine, builtins, myCommands);
-            //
-            // LineReader
-            //
+
             LineReader reader = LineReaderBuilder.builder()
                     .terminal(terminal)
                     .completer(systemRegistry.completer())
@@ -271,30 +222,24 @@ public class App {
                     .variable(LineReader.HISTORY_FILE, Paths.get(root, "history"))
                     .option(Option.INSERT_BRACKET, true)
                     .option(Option.EMPTY_WORD_OPTIONS, false)
-                    .option(Option.USE_FORWARD_SLASH, true)             // use forward slash in directory separator
+                    .option(Option.USE_FORWARD_SLASH, true)
                     .option(Option.DISABLE_EVENT_EXPANSION, true)
                     .build();
             if (OSUtils.IS_WINDOWS) {
-                reader.setVariable(LineReader.BLINK_MATCHING_PAREN, 0); // if enabled cursor remains in begin parenthesis (gitbash)
+                reader.setVariable(LineReader.BLINK_MATCHING_PAREN, 0);
             }
-            //
-            // complete command registries
-            //
+
             consoleEngine.setLineReader(reader);
             builtins.setLineReader(reader);
             myCommands.setLineReader(reader);
-            //
-            // widgets and console initialization
-            //
+
             new TailTipWidgets(reader, systemRegistry::commandDescription, 5, TipType.COMPLETER);
             KeyMap<Binding> keyMap = reader.getKeyMaps().get("main");
             keyMap.bind(new Reference(Widgets.TAILTIP_TOGGLE), KeyMap.alt("s"));
-            //
-            // REPL-loop
-            //
+
             while (true) {
                 try {
-                    systemRegistry.cleanUp();         // delete temporary variables and reset output streams
+                    systemRegistry.cleanUp();
                     String line = reader.readLine(prompt());
                     line = !myCommands.isCommand(parser.getCommand(line)) ? "! " + line : line;
                     Object result = systemRegistry.execute(line);
@@ -305,7 +250,7 @@ public class App {
                 }
                 catch (EndOfFileException e) {
                     String pl = e.getPartialLine();
-                    if (pl != null) {                 // execute last line from redirected file (required for Windows)
+                    if (pl != null) {
                         try {
                             consoleEngine.println(systemRegistry.execute(pl));
                         } catch (Exception e2) {
@@ -315,10 +260,10 @@ public class App {
                     break;
                 }
                 catch (Exception|Error e) {
-                    systemRegistry.trace(e);          // print exception and save it to console variable
+                    systemRegistry.trace(e);
                 }
             }
-            systemRegistry.close();                   // persist pipeline completer names etc
+            systemRegistry.close();
         }
         catch (Throwable t) {
             t.printStackTrace();
